@@ -323,7 +323,7 @@ Manual check from a terminal:
 
 ## Known limitations
 
-- **Credentials are in the source code.** The PostgreSQL password is hard-coded in `PostgreSQLBackupManager.vb`. Anyone with the source or the compiled `.dll` can read it. Moving it to a [`pgpass.conf`](https://www.postgresql.org/docs/current/libpq-pgpass.html) file (`%APPDATA%\postgresql\pgpass.conf`) is recommended — **remove it from the code before publishing this repository publicly.**
+
 - **Local server only** — host and user are fixed to `localhost` / `postgres`.
 - **Missed schedules are skipped**, not run later.
 - **Hourly times only** (00:00–23:00).
