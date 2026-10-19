@@ -4,7 +4,7 @@ A Windows desktop utility (VB.NET, Windows Forms, .NET 10) that backs up the **`
 
 Backups are written in PostgreSQL's **custom archive format** with a `.backup` extension — the same format pgAdmin produces — so they can be restored with pgAdmin or `pg_restore`.
 
-> The project, solution and executable are named `pvncScheduler`; the window title is **pvnc Backup Manager**.
+
 
 ---
 
