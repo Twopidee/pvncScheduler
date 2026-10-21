@@ -54,17 +54,13 @@ If the diagnostics report a connection error:
 **The program connects with:**
 - Host: localhost
 - User: postgres
-- Password: whatever is entered in the **Password** box in the main window
+- No password — the local server trusts connections from the same PC
 
-**To fix a password error** (`password authentication failed` or `no password supplied`):
-
-1. Type the correct `postgres` password into the **Password** box. It's saved automatically, encrypted for your Windows account.
-2. Open **Diagnostics → Test Connection** to confirm it works.
-
-Alternatively, leave the box empty and put the password in a [`pgpass.conf`](https://www.postgresql.org/docs/current/libpq-pgpass.html) file at `%APPDATA%\postgresql\pgpass.conf`:
+**If you get a password error** (`password authentication failed` or `no password supplied`), the server has been changed to require one. Put it in a [`pgpass.conf`](https://www.postgresql.org/docs/current/libpq-pgpass.html) file at `%APPDATA%\postgresql\pgpass.conf` (create the `postgresql` folder if needed):
 ```
 localhost:*:*:postgres:<password>
 ```
+Then open **Diagnostics → Test Connection** to confirm it works. `pg_dump` and `psql` read this file automatically.
 
 ---
 

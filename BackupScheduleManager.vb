@@ -20,9 +20,11 @@ Public Class BackupScheduleManager
     Private ReadOnly scheduleLock As New Object()
     ' 1 while a tick is running a backup, so ticks that fire during a long backup don't start another
     Private tickInProgress As Integer = 0
+    ' Databases still to retry after a failure; Nothing means the next run backs up all of them
+    Private pendingDatabases As List(Of String)
 
     Public Event BackupCompleted()
-    Public Event BackupFailed(retryAt As DateTime)
+    Public Event BackupFailed(failedDatabases As String, retryAt As DateTime)
 
     Public Property BackupTime As String
         Get
@@ -48,6 +50,7 @@ Public Class BackupScheduleManager
 
             SyncLock scheduleLock
                 nextRun = NextOccurrence(DateTime.Now)
+                pendingDatabases = Nothing
             End SyncLock
 
             scheduleTimer = New Timer()
@@ -95,24 +98,40 @@ Public Class BackupScheduleManager
                 Return
             End If
 
-            If PerformBackup() Then
+            Dim targets As List(Of String)
+            SyncLock scheduleLock
+                targets = If(pendingDatabases, PostgreSQLBackupManager.DatabasesFor(currentDatabase).ToList())
+            End SyncLock
+
+            Dim failed As New List(Of String)
+            For Each database In targets
+                If Not PerformBackup(database) Then
+                    failed.Add(database)
+                End If
+            Next
+
+            If failed.Count = 0 Then
                 SyncLock scheduleLock
                     nextRun = NextOccurrence(DateTime.Now)
+                    pendingDatabases = Nothing
                 End SyncLock
                 RaiseEvent BackupCompleted()
             Else
                 Dim retryAt As DateTime
                 SyncLock scheduleLock
-                    ' Retry soon, but never later than the next regular backup
+                    ' Retry only the failed databases soon, but never later than the next regular backup
+                    ' (which backs up everything again)
                     retryAt = DateTime.Now.Add(RetryInterval)
+                    pendingDatabases = failed
                     Dim regular = NextOccurrence(DateTime.Now)
-                    If regular < retryAt Then
+                    If regular <= retryAt Then
                         retryAt = regular
+                        pendingDatabases = Nothing
                     End If
                     nextRun = retryAt
                 End SyncLock
                 Debug.WriteLine("Scheduled backup will retry at " & retryAt.ToString("yyyy-MM-dd HH:mm"))
-                RaiseEvent BackupFailed(retryAt)
+                RaiseEvent BackupFailed(String.Join(", ", failed), retryAt)
             End If
         Catch ex As Exception
             Debug.WriteLine("Timer error: " & ex.Message)
@@ -150,10 +169,10 @@ Public Class BackupScheduleManager
         End Select
     End Function
 
-    Private Function PerformBackup() As Boolean
+    Private Function PerformBackup(database As String) As Boolean
         Try
-            Debug.WriteLine("Executing scheduled backup for " & currentDatabase)
-            Dim backupFile = backupManager.CreateBackup(currentDatabase, currentBackupFolder)
+            Debug.WriteLine("Executing scheduled backup for " & database)
+            Dim backupFile = backupManager.CreateBackup(database, currentBackupFolder)
 
             If Not String.IsNullOrEmpty(backupFile) Then
                 Debug.WriteLine("Scheduled backup completed: " & backupFile)

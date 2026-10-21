@@ -7,9 +7,54 @@ Public Class PostgreSQLBackupManager
     ' Shared across all instances: 1 while a pg_dump is running
     Private Shared backupInProgress As Integer = 0
 
-    ' Password for the postgres user, set from the main window (stored DPAPI-encrypted in the settings file).
-    ' When empty, pg_dump falls back to %APPDATA%\postgresql\pgpass.conf.
-    Public Shared Property Password As String = ""
+    ' Databases this program backs up. Each saves to a subfolder of the backup folder named after the database.
+    Public Shared ReadOnly Databases As String() = {"pvnc", "bizinfo", "bizmaint", "postgres"}
+    Public Const AllDatabases As String = "All databases"
+
+    ' The databases a dropdown selection stands for: one, or all of them for "All databases"
+    Public Shared Function DatabasesFor(selection As String) As String()
+        If selection = AllDatabases Then
+            Return Databases
+        End If
+        Return {selection}
+    End Function
+
+    Public Shared Function BackupFolderFor(rootFolder As String, database As String) As String
+        Return Path.Combine(rootFolder, database)
+    End Function
+
+    Private Shared Function BackupNamePattern(database As String) As String
+        Return "^" & System.Text.RegularExpressions.Regex.Escape(database) & "_\d{8}_\d{6}\.backup$"
+    End Function
+
+    ' Older versions saved pvnc backups directly in the backup folder. Move any backups this program made
+    ' that are still there into their database's subfolder, so they're listed and kept by retention.
+    Public Shared Sub MoveRootBackupsIntoFolders(rootFolder As String)
+        If Not Directory.Exists(rootFolder) Then
+            Return
+        End If
+
+        For Each database In Databases
+            Dim namePattern = BackupNamePattern(database)
+            For Each file In Directory.GetFiles(rootFolder, database & "_*.backup")
+                Dim fileName = Path.GetFileName(file)
+                If Not System.Text.RegularExpressions.Regex.IsMatch(fileName, namePattern) Then
+                    Continue For
+                End If
+                Try
+                    Dim targetFolder = BackupFolderFor(rootFolder, database)
+                    Dim target = Path.Combine(targetFolder, fileName)
+                    If Not IO.File.Exists(target) Then
+                        Directory.CreateDirectory(targetFolder)
+                        IO.File.Move(file, target)
+                        Debug.WriteLine("Moved " & fileName & " into " & targetFolder)
+                    End If
+                Catch ex As Exception
+                    Debug.WriteLine("Could not move " & fileName & ": " & ex.Message)
+                End Try
+            Next
+        Next
+    End Sub
 
     Public Sub New()
         pgDumpExecutable = FindPgDump()
@@ -57,7 +102,7 @@ Public Class PostgreSQLBackupManager
         End Get
     End Property
 
-    Public Function CreateBackup(database As String, backupFolder As String) As String
+    Public Function CreateBackup(database As String, rootFolder As String) As String
         ' Only one pg_dump at a time, whether started by the button, the tray menu or the scheduler
         If System.Threading.Interlocked.CompareExchange(backupInProgress, 1, 0) <> 0 Then
             Debug.WriteLine("Backup skipped: another backup is already running")
@@ -65,14 +110,16 @@ Public Class PostgreSQLBackupManager
         End If
 
         Try
-            Return RunBackup(database, backupFolder)
+            Return RunBackup(database, rootFolder)
         Finally
             System.Threading.Interlocked.Exchange(backupInProgress, 0)
         End Try
     End Function
 
-    Private Function RunBackup(database As String, backupFolder As String) As String
+    Private Function RunBackup(database As String, rootFolder As String) As String
         Try
+            Dim backupFolder = BackupFolderFor(rootFolder, database)
+
             ' Create backup folder if it doesn't exist
             If Not Directory.Exists(backupFolder) Then
                 Directory.CreateDirectory(backupFolder)
@@ -86,7 +133,7 @@ Public Class PostgreSQLBackupManager
 
             ' Generate backup filename with timestamp
             Dim timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss")
-            Dim backupFileName = String.Format("pvnc_{0}.backup", timestamp)
+            Dim backupFileName = String.Format("{0}_{1}.backup", database, timestamp)
             Dim backupFilePath = Path.Combine(backupFolder, backupFileName)
 
             ' Setup process to run pg_dump with proper binary archive output
@@ -109,10 +156,8 @@ Public Class PostgreSQLBackupManager
             processInfo.RedirectStandardInput = True
             processInfo.CreateNoWindow = True
 
-            ' Pass the password to this pg_dump process only; without one, pg_dump uses pgpass.conf
-            If Not String.IsNullOrEmpty(Password) Then
-                processInfo.EnvironmentVariables("PGPASSWORD") = Password
-            End If
+            ' No password is passed: the local server trusts connections from this PC. If one is ever
+            ' required, pg_dump reads it from %APPDATA%\postgresql\pgpass.conf.
 
             Debug.WriteLine("Starting pg_dump with: " & processInfo.FileName & " " & processInfo.Arguments)
 
@@ -153,7 +198,7 @@ Public Class PostgreSQLBackupManager
                 If process.ExitCode = 0 AndAlso fileInfo.Exists AndAlso fileInfo.Length > 0 Then
                     Debug.WriteLine("Backup succeeded: " & backupFilePath & " (" & fileInfo.Length & " bytes, binary archive)")
                     ' Cleanup old backups, keep only 10 most recent
-                    CleanupOldBackups(backupFolder)
+                    CleanupOldBackups(rootFolder, database)
                     process.Dispose()
                     Return backupFilePath
                 Else
@@ -195,23 +240,25 @@ Public Class PostgreSQLBackupManager
         End Try
     End Function
 
-    Public Shared Function GetBackupFiles(backupFolder As String) As List(Of String)
-        ' Only backups this program created (pvnc_yyyyMMdd_HHmmss.backup), newest first. The timestamp in
-        ' the name sorts correctly and, unlike file dates, isn't changed by OneDrive or copying.
-        ' Both the on-screen list and the cleanup use this, so whatever is listed is exactly what is kept.
+    Public Shared Function GetBackupFiles(rootFolder As String, database As String) As List(Of String)
+        ' Only backups this program created for this database (<database>_yyyyMMdd_HHmmss.backup), newest
+        ' first. The timestamp in the name sorts correctly and, unlike file dates, isn't changed by OneDrive
+        ' or copying. Both the on-screen list and the cleanup use this, so whatever is listed is exactly what is kept.
+        Dim backupFolder = BackupFolderFor(rootFolder, database)
         If Not Directory.Exists(backupFolder) Then
             Return New List(Of String)
         End If
 
-        Return Directory.GetFiles(backupFolder, "pvnc_*.backup").
-            Where(Function(f) System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), "^pvnc_\d{8}_\d{6}\.backup$")).
+        Dim namePattern = BackupNamePattern(database)
+        Return Directory.GetFiles(backupFolder, database & "_*.backup").
+            Where(Function(f) System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), namePattern)).
             OrderByDescending(Function(f) Path.GetFileName(f), StringComparer.Ordinal).
             ToList()
     End Function
 
-    Public Sub CleanupOldBackups(backupFolder As String)
+    Public Sub CleanupOldBackups(rootFolder As String, database As String)
         Try
-            Dim backupFiles = GetBackupFiles(backupFolder)
+            Dim backupFiles = GetBackupFiles(rootFolder, database)
 
             ' Keep only the most recent backups, deleting the oldest
             If backupFiles.Count > MaxBackupsToKeep Then

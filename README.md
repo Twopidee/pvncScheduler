@@ -1,6 +1,6 @@
 # pvncScheduler
 
-A Windows desktop utility (VB.NET, Windows Forms, .NET 10) that backs up the **`pvnc` PostgreSQL database** on demand or on a schedule. It runs quietly in the system tray, can start automatically when you sign in to Windows, and keeps a rolling set of the 10 most recent backups.
+A Windows desktop utility (VB.NET, Windows Forms, .NET 10) that backs up the **`pvnc`, `bizinfo`, `bizmaint` and `postgres` PostgreSQL databases** — one at a time or all together — on demand or on a schedule. It runs quietly in the system tray, can start automatically when you sign in to Windows, and keeps a rolling set of the 10 most recent backups of each database.
 
 Backups are written in PostgreSQL's **custom archive format** with a `.backup` extension — the same format pgAdmin produces — so they can be restored with pgAdmin or `pg_restore`.
 
@@ -23,7 +23,7 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
   - [Start with Windows](#start-with-windows)
   - [Diagnostics](#diagnostics)
 - [Backup files](#backup-files)
-  - [Naming](#naming)
+  - [Folders and naming](#folders-and-naming)
   - [Retention (keep 10 newest)](#retention-keep-10-newest)
   - [Restoring a backup](#restoring-a-backup)
 - [How it works](#how-it-works)
@@ -46,8 +46,9 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
 | **System tray** | Closing the window hides it to the tray; the scheduler keeps running. Tray menu: Show / Backup Now / Exit. |
 | **Start with Windows** | Optional checkbox that launches the program straight to the tray at sign-in. |
 | **Single instance** | Launching it again while it's already running just brings the existing window forward, so backups can never be scheduled twice. |
-| **Retention** | Keeps the 10 newest backups it created and deletes older ones, oldest first. |
-| **Recent backups list** | Shows the 10 newest `.backup` files in the folder (name, size in MB, date) when the program starts and whenever the window is reopened. |
+| **Multiple databases** | Back up `pvnc`, `bizinfo`, `bizmaint`, `postgres`, or **All databases** in one go. Each database has its own folder under the backup folder. |
+| **Retention** | Keeps the 10 newest backups of each database and deletes older ones, oldest first. |
+| **Recent backups list** | Shows the newest backups of the selected database (name, size in MB, date) — or of all databases, newest first — when the program starts, when the selection changes and whenever the window is reopened. |
 | **Diagnostics** | Checks that `pg_dump` can be found and tests the PostgreSQL connection. |
 | **Persistent settings** | Folder, schedule, day, time and enabled state are saved automatically and restored on startup. |
 
@@ -62,7 +63,7 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
   2. `C:\Program Files\PostgreSQL\<15, 14, 13, 12, 11, 10, 9.6, 9.2>\bin\`
   3. `C:\Program Files (x86)\PostgreSQL\<same versions>\bin\`
   4. Anything on the system `PATH`
-- A PostgreSQL server reachable on **localhost** with a **`postgres`** user that can read the `pvnc` database.
+- A PostgreSQL server reachable on **localhost** with a **`postgres`** user that can read the databases.
 
 ---
 
@@ -103,7 +104,7 @@ The icon is `LDSicon.ico` in the project folder. `<ApplicationIcon>` in `pvncSch
 
 | Control | Purpose |
 |---|---|
-| **Database** | Database to back up (default `pvnc`). |
+| **Database** | Database to back up — `pvnc` (default), `bizinfo`, `bizmaint`, `postgres`, or **All databases**. Used by both Create Backup Now and the schedule; saved automatically. |
 | **Backup Folder / Browse...** | Where backups are written. Saved automatically when chosen. |
 | **Create Backup Now** | Runs a backup immediately. |
 | **Diagnostics** | Opens the diagnostics window. |
@@ -112,8 +113,7 @@ The icon is `LDSicon.ico` in the project folder. `<ApplicationIcon>` in `pvncSch
 | **Backup Time** | Hour the scheduled backup runs (24-hour clock). |
 | **Day** | Weekday (Weekly) or day of month (Monthly). Greyed out for Daily. |
 | **Start with Windows** | Launch at sign-in, minimized to the tray. |
-| **Password** | Password for the PostgreSQL `postgres` user. Saved automatically, encrypted for your Windows account. |
-| **Recent Backups** | 10 newest backups in the folder. |
+| **Recent Backups** | 10 newest backups of the selected database (up to 40 for All databases). |
 | **Status** (bottom left) | Result of the last action — green for success, red for errors. |
 | **Scheduled Backup** (bottom right) | Current schedule, e.g. *Scheduled Backup: Weekly on Fridays at 02:00*. |
 
@@ -121,7 +121,7 @@ The icon is `LDSicon.ico` in the project folder. `<ApplicationIcon>` in `pvncSch
 
 1. Choose a backup folder with **Browse...**.
 2. Click **Create Backup Now** (or right-click the tray icon → **Backup Now**).
-3. The status bar shows *Backing up database: pvnc...* and then *Backup completed successfully: pvnc_YYYYMMDD_HHMMSS.backup*. The Recent Backups list refreshes.
+3. The status bar shows *Backing up database: pvnc...* and then *Backup completed successfully: pvnc_YYYYMMDD_HHMMSS.backup*. With **All databases** selected, the four are backed up one after another and the status ends with *Backed up all 4 databases successfully.* The Recent Backups list refreshes.
 
 Success is reported only in the status bar — there's no pop-up. A failure shows the status in red **and** an error dialog so it isn't missed.
 
@@ -182,19 +182,25 @@ The **Diagnostics** window opens with an automatic `pg_dump` check and offers:
 
 ## Backup files
 
-### Naming
+### Folders and naming
+
+Each database gets its own subfolder of the chosen backup folder:
 
 ```
-pvnc_YYYYMMDD_HHMMSS.backup
+<backup folder>\
+    pvnc\pvnc_YYYYMMDD_HHMMSS.backup
+    bizinfo\bizinfo_YYYYMMDD_HHMMSS.backup
+    bizmaint\bizmaint_YYYYMMDD_HHMMSS.backup
+    postgres\postgres_YYYYMMDD_HHMMSS.backup
 ```
 
-Example: `pvnc_20261019_093431.backup` — created 19 Oct 2026 at 09:34:31.
+Subfolders are created automatically on the first backup. Older versions of this program saved pvnc backups directly in the backup folder; any such `pvnc_YYYYMMDD_HHMMSS.backup` files are moved into the `pvnc` subfolder automatically when the program starts (nothing is deleted, and a file is left where it is if one with the same name is already in the subfolder). Example: `pvnc_20261019_093431.backup` — created 19 Oct 2026 at 09:34:31.
 
 ### Retention (keep 10 newest)
 
-After **every successful** backup (manual or scheduled), the program keeps the **10 newest** backups and deletes the rest, oldest first.
+After **every successful** backup (manual or scheduled), the program keeps the **10 newest** backups **of that database** and deletes the rest, oldest first.
 
-- **Only files the program created are touched** — names must match exactly `pvnc_YYYYMMDD_HHMMSS.backup`. Any other file in the folder (e.g. a manual `pvnc.backup` from pgAdmin, or unrelated files) is never deleted.
+- **Only files the program created are touched** — names must match exactly `<database>_YYYYMMDD_HHMMSS.backup` in that database's folder. Any other file (e.g. a manual `pvnc.backup` from pgAdmin, or unrelated files) is never deleted.
 - **"Oldest" is determined by the timestamp in the file name**, not the file's dates, so OneDrive syncing, copying or restoring files can't cause the wrong backups to be removed.
 - **A failed backup never triggers cleanup**, so an error can't cost you a good backup.
 - The limit is the constant `MaxBackupsToKeep` in `PostgreSQLBackupManager.vb`.
@@ -239,10 +245,10 @@ flowchart TD
 
 Key details (`PostgreSQLBackupManager.vb`):
 
-- **Command:** `pg_dump -F c -h localhost -U postgres -f "<folder>\pvnc_<timestamp>.backup" "<database>"`
+- **Command:** `pg_dump -F c -h localhost -U postgres -w -f "<folder>\<database>_<timestamp>.backup" "<database>"` — run once per database; **All databases** runs them one after another.
   - `-F c` — custom (compressed, binary) archive format, restorable with `pg_restore`.
   - `-f` — `pg_dump` writes the file **directly**. Earlier versions piped the archive through stdout; with older `pg_dump` builds that produces dozens of *"ftell mismatch with expected position"* warnings and a bloated archive, and the unread warnings filled the stderr pipe and **deadlocked** the program. Writing straight to the file avoids both problems.
-- **Password:** the password entered in the main window is passed to `pg_dump` via the `PGPASSWORD` environment variable of that child process only. If none is entered, `pg_dump` uses `%APPDATA%\postgresql\pgpass.conf` if it exists. `-w` stops `pg_dump` from ever waiting at a password prompt.
+- **Password:** none is used — the local PostgreSQL server trusts connections from the same PC. If a server ever does require one, put it in `%APPDATA%\postgresql\pgpass.conf` (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)). `-w` stops `pg_dump` from ever waiting at a password prompt.
 - **Output streams:** stdout and stderr are drained asynchronously so `pg_dump` can never block on a full pipe.
 - **Timeout:** 10 minutes. On timeout the process is killed and the partial file deleted.
 - **Threading:** manual backups run on a background task (`Task.Run`) so the UI never freezes; scheduled backups run on the scheduler's timer thread.
@@ -253,7 +259,8 @@ Key details (`PostgreSQLBackupManager.vb`):
 `BackupScheduleManager.vb` works out the **next run time** when the schedule starts — the next scheduled day (always for Daily; matching weekday for Weekly; matching day-of-month or last day of the month for Monthly) at the chosen hour, strictly after now. A `System.Timers.Timer` ticks **every 60 seconds**, and the first tick at or after that time runs the backup. A late timer tick or a PC waking from sleep therefore still gets its backup.
 
 - **Success** — the next run time moves to the next scheduled day; the main window refreshes its list and status (*Scheduled backup completed successfully.*).
-- **Failure** — the backup is retried in 15 minutes (or at the next regular run, if that comes sooner), and the status bar shows *Scheduled backup failed. Retrying &lt;day&gt; &lt;time&gt;.* in red.
+- **Failure** — only the database(s) that failed are retried in 15 minutes (or everything at the next regular run, if that comes sooner), and the status bar shows *Scheduled backup failed for: &lt;databases&gt;. Retrying &lt;day&gt; &lt;time&gt;.* in red.
+- The schedule backs up whatever is selected in **Database** — pick **All databases** to back up all four on every run.
 - **Only one backup runs at a time.** If a manual backup is running when a scheduled one is due, the scheduled one waits for it. Clicking **Create Backup Now** or tray → **Backup Now** while a backup is running just shows *A backup is already running.*
 - Changing the schedule, day or time recalculates the next run from the current time.
 
@@ -266,22 +273,22 @@ Settings are saved to:
 ```
 
 ```ini
+Database=All databases
 BackupFolder=C:\Backups\pvnc
 Schedule=Weekly
 BackupTime=02:00
 BackupDay=Friday
 ScheduleEnabled=True
-Password=AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA...
 ```
 
 | Key | Values |
 |---|---|
+| `Database` | `pvnc`, `bizinfo`, `bizmaint`, `postgres` or `All databases` |
 | `BackupFolder` | Absolute folder path. Kept on load even if the folder is missing (e.g. a network or USB drive not connected yet) — the status bar shows a warning and scheduled backups retry until it's available. |
 | `Schedule` | `Disabled`, `Daily`, `Weekly`, `Monthly` |
 | `BackupTime` | `00:00` – `23:00` |
 | `BackupDay` | Weekly: `Sunday`–`Saturday`. Monthly: `1`–`28` or `Last day`. Empty for Daily. |
 | `ScheduleEnabled` | `True` / `False` |
-| `Password` | The PostgreSQL password, encrypted with Windows DPAPI. Only the same Windows user on the same PC can decrypt it; if the file is copied elsewhere, the program asks for the password again. Empty if none is saved. |
 
 The **Start with Windows** setting lives in the registry (see [Start with Windows](#start-with-windows)), not in this file.
 
@@ -313,13 +320,12 @@ These values are currently set in code:
 |---|---|---|
 | PostgreSQL host | `PostgreSQLBackupManager.vb` → `processInfo.Arguments` | `localhost` |
 | PostgreSQL user | `PostgreSQLBackupManager.vb` → `processInfo.Arguments` | `postgres` |
-| PostgreSQL password | **Password** box in the main window (stored encrypted, see [Settings storage](#settings-storage)) | *(none)* |
+| PostgreSQL password | Not used (local trust); optional `%APPDATA%\postgresql\pgpass.conf` | *(none)* |
 | `pg_dump` search paths | `PostgreSQLBackupManager.FindPgDump` | see [Requirements](#requirements) |
 | Backups kept | `PostgreSQLBackupManager.MaxBackupsToKeep` | `10` |
 | Backup timeout | `PostgreSQLBackupManager.CreateBackup` → `WaitForExit` | 10 minutes |
 | Scheduler check interval | `BackupScheduleManager.StartScheduler` | 60 seconds |
-| Database list | `Form1.Designer.vb` → `cmbDatabase.Items` | `pvnc` |
-
+| Database list | `PostgreSQLBackupManager.Databases` | `pvnc`, `bizinfo`, `bizmaint`, `postgres` |
 ---
 
 ## Troubleshooting
@@ -333,7 +339,7 @@ These values are currently set in code:
 | No tray icon | Check the hidden-icons (**^**) area next to the clock. |
 | Scheduled backup didn't run | Was the program running at that time? Is **Enabled** checked? Does the bottom-right label show the expected day/time? Runs missed while the PC was off or the program was exited are not caught up. A red *Scheduled backup failed* status means it's retrying every 15 minutes — use **Diagnostics** to find out why. |
 | Program doesn't start at sign-in | Check **Start with Windows** is ticked and that `pvncScheduler` is enabled in **Task Manager → Startup apps**. If you moved or rebuilt the `.exe` elsewhere, open the new copy once. |
-| Old backups not deleted | Retention only applies to files named exactly `pvnc_YYYYMMDD_HHMMSS.backup`, and only runs after a successful backup. |
+| Old backups not deleted | Retention only applies to files named exactly `<database>_YYYYMMDD_HHMMSS.backup` in that database's folder, and only runs after a successful backup. |
 | Need more detail on a failure | Run from Visual Studio in Debug and watch the **Output** window — `pg_dump`'s exit code and error text are written there. |
 
 Manual check from a terminal:

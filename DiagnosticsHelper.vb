@@ -50,7 +50,7 @@ Public Class DiagnosticsHelper
         End Try
     End Function
 
-    Public Shared Function TestPostgreSQLConnection(host As String, username As String, password As String) As String
+    Public Shared Function TestPostgreSQLConnection(host As String, username As String) As String
         Try
             Dim pinfo = New ProcessStartInfo
             pinfo.FileName = "C:\BouMatic\postgresql\bin\psql.exe"
@@ -60,9 +60,6 @@ Public Class DiagnosticsHelper
             pinfo.RedirectStandardOutput = True
             pinfo.RedirectStandardError = True
             pinfo.CreateNoWindow = True
-            If Not String.IsNullOrEmpty(password) Then
-                pinfo.EnvironmentVariables("PGPASSWORD") = password
-            End If
 
             Using proc = Process.Start(pinfo)
                 Dim output = proc.StandardOutput.ReadToEnd()

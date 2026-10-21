@@ -148,13 +148,10 @@ Public Class Form1
                     ElseIf line.StartsWith("ScheduleEnabled=") Then
                         Dim value = line.Substring("ScheduleEnabled=".Length)
                         chkEnableSchedule.Checked = Boolean.Parse(value)
-                    ElseIf line.StartsWith("Password=") Then
-                        Dim password = PasswordProtector.Unprotect(line.Substring("Password=".Length))
-                        If password Is Nothing Then
-                            UpdateStatusLabel("Saved password could not be read. Please enter it again.", "warning")
-                        Else
-                            txtPassword.Text = password
-                            PostgreSQLBackupManager.Password = password
+                    ElseIf line.StartsWith("Database=") Then
+                        Dim value = line.Substring("Database=".Length)
+                        If cmbDatabase.Items.Contains(value) Then
+                            cmbDatabase.SelectedItem = value
                         End If
                     End If
                 Next
@@ -164,40 +161,23 @@ Public Class Form1
         Finally
             loadingSettings = False
         End Try
-
-        If String.IsNullOrEmpty(PostgreSQLBackupManager.Password) AndAlso Not File.Exists(PgPassFile()) Then
-            UpdateStatusLabel("Enter the PostgreSQL password so backups can connect.", "warning")
-        End If
-    End Sub
-
-    Private Shared Function PgPassFile() As String
-        Return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "postgresql", "pgpass.conf")
-    End Function
-
-    Private Sub txtPassword_TextChanged(sender As Object, e As EventArgs)
-        If loadingSettings Then
-            Return
-        End If
-        PostgreSQLBackupManager.Password = txtPassword.Text
-        SaveSettings()
     End Sub
 
     Private Sub SaveSettings()
         ' Controls fire change events while settings load; saving then would overwrite
-        ' settings (like the password) that haven't been read yet
+        ' settings that haven't been read yet
         If loadingSettings Then
             Return
         End If
 
         Try
             Dim lines As New List(Of String)
+            lines.Add("Database=" & cmbDatabase.Text)
             lines.Add("BackupFolder=" & txtBackupFolder.Text)
             lines.Add("Schedule=" & cmbSchedule.Text)
             lines.Add("BackupTime=" & cmbTime.Text)
             lines.Add("BackupDay=" & SelectedBackupDay())
             lines.Add("ScheduleEnabled=" & chkEnableSchedule.Checked.ToString())
-            ' Encrypted with DPAPI for the current Windows user, never stored as plain text
-            lines.Add("Password=" & PasswordProtector.Protect(txtPassword.Text))
             File.WriteAllLines(settingsFile, lines)
         Catch ex As Exception
             Debug.WriteLine("Error saving settings: " & ex.Message)
@@ -233,20 +213,34 @@ Public Class Form1
         End If
 
         btnBackupNow.Enabled = False
-        Dim database As String = cmbDatabase.Text
+        Dim databases = PostgreSQLBackupManager.DatabasesFor(cmbDatabase.Text)
+        Dim backupFolder As String = txtBackupFolder.Text
 
         Try
-            UpdateStatusLabel("Backing up database: " & database & "...")
-            ' Run pg_dump off the UI thread so the window stays responsive
-            Dim backupFolder As String = txtBackupFolder.Text
-            Dim backupFile As String = Await Task.Run(Function() backupManager.CreateBackup(database, backupFolder))
+            Dim failed As New List(Of String)
+            Dim lastFile As String = Nothing
+            For Each database In databases
+                UpdateStatusLabel("Backing up database: " & database & "...")
+                ' Run pg_dump off the UI thread so the window stays responsive
+                Dim backupFile As String = Await Task.Run(Function() backupManager.CreateBackup(database, backupFolder))
+                If String.IsNullOrEmpty(backupFile) Then
+                    failed.Add(database)
+                Else
+                    lastFile = backupFile
+                End If
+            Next
+            LoadBackupsList()
 
-            If Not String.IsNullOrEmpty(backupFile) Then
-                UpdateStatusLabel("Backup completed successfully: " & Path.GetFileName(backupFile))
-                LoadBackupsList()
+            If failed.Count = 0 Then
+                If databases.Length = 1 Then
+                    UpdateStatusLabel("Backup completed successfully: " & Path.GetFileName(lastFile))
+                Else
+                    UpdateStatusLabel("Backed up all " & databases.Length & " databases successfully.")
+                End If
             Else
-                UpdateStatusLabel("Backup failed. Check the password, PostgreSQL installation and connection.", "error")
-                MessageBox.Show("Backup failed. Check that the password is correct and pg_dump is installed (Diagnostics can test both).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                Dim failedList = String.Join(", ", failed)
+                UpdateStatusLabel("Backup failed for: " & failedList & ". Check PostgreSQL installation and connection.", "error")
+                MessageBox.Show("Backup failed for: " & failedList & vbCrLf & vbCrLf & "Check that PostgreSQL is running and pg_dump is installed (Diagnostics can test both).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End If
         Catch ex As Exception
             UpdateStatusLabel("Error: " & ex.Message, "error")
@@ -254,6 +248,16 @@ Public Class Form1
         Finally
             btnBackupNow.Enabled = True
         End Try
+    End Sub
+
+    Private Sub cmbDatabase_SelectedIndexChanged(sender As Object, e As EventArgs)
+        If loadingSettings Then
+            Return
+        End If
+        SaveSettings()
+        LoadBackupsList()
+        ' The schedule backs up whichever database is selected
+        ApplyScheduleChange()
     End Sub
 
     Private Sub cmbSchedule_SelectedIndexChanged(sender As Object, e As EventArgs)
@@ -342,7 +346,7 @@ Public Class Form1
         SaveSettings()
 
         scheduleManager.StartScheduler(cmbDatabase.Text, cmbSchedule.Text, SelectedBackupDay(), cmbTime.Text, txtBackupFolder.Text)
-        UpdateScheduleStatusLabel("Scheduled Backup: " & DescribeSchedule() & " at " & cmbTime.Text)
+        UpdateScheduleStatusLabel("Scheduled Backup: " & cmbDatabase.Text & ", " & DescribeSchedule() & " at " & cmbTime.Text)
     End Sub
 
     Private Function DescribeSchedule() As String
@@ -366,9 +370,10 @@ Public Class Form1
                   End Sub)
     End Sub
 
-    Private Sub OnScheduledBackupFailed(retryAt As DateTime)
+    Private Sub OnScheduledBackupFailed(failedDatabases As String, retryAt As DateTime)
         Me.Invoke(Sub()
-                      UpdateStatusLabel("Scheduled backup failed. Retrying " & retryAt.ToString("ddd HH:mm") & ".", "error")
+                      LoadBackupsList()
+                      UpdateStatusLabel("Scheduled backup failed for: " & failedDatabases & ". Retrying " & retryAt.ToString("ddd HH:mm") & ".", "error")
                   End Sub)
     End Sub
 
@@ -380,11 +385,19 @@ Public Class Form1
         End If
 
         Try
-            ' Remove anything beyond the newest backups so the folder matches what is listed
-            backupManager.CleanupOldBackups(txtBackupFolder.Text)
+            PostgreSQLBackupManager.MoveRootBackupsIntoFolders(txtBackupFolder.Text)
 
-            Dim backupFiles = PostgreSQLBackupManager.GetBackupFiles(txtBackupFolder.Text)
-            For Each file In backupFiles.Take(PostgreSQLBackupManager.MaxBackupsToKeep)
+            ' Show the selected database's backups, or every database's for "All databases", newest first
+            Dim backupFiles As New List(Of String)
+            For Each database In PostgreSQLBackupManager.DatabasesFor(cmbDatabase.Text)
+                ' Remove anything beyond the newest backups so the folder matches what is listed
+                backupManager.CleanupOldBackups(txtBackupFolder.Text, database)
+                backupFiles.AddRange(PostgreSQLBackupManager.GetBackupFiles(txtBackupFolder.Text, database).Take(PostgreSQLBackupManager.MaxBackupsToKeep))
+            Next
+
+            ' Names end in _yyyyMMdd_HHmmss.backup, so sorting by that tail orders by backup time across databases
+            Dim newestFirst = backupFiles.OrderByDescending(Function(f) Path.GetFileName(f).Substring(Path.GetFileName(f).Length - "yyyyMMdd_HHmmss.backup".Length), StringComparer.Ordinal)
+            For Each file In newestFirst
                 Dim fileInfo = New FileInfo(file)
                 Dim displayText = String.Format("{0} ({1} MB) - {2:yyyy-MM-dd HH:mm:ss}",
                     fileInfo.Name,

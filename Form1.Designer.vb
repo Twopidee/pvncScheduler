@@ -38,8 +38,6 @@ Partial Class Form1
         Me.cmbDay = New System.Windows.Forms.ComboBox()
         Me.chkEnableSchedule = New System.Windows.Forms.CheckBox()
         Me.chkStartWithWindows = New System.Windows.Forms.CheckBox()
-        Me.Label7 = New System.Windows.Forms.Label()
-        Me.txtPassword = New System.Windows.Forms.TextBox()
         Me.lstBackups = New System.Windows.Forms.ListBox()
         Me.lblStatus = New System.Windows.Forms.Label()
         Me.lblScheduleStatus = New System.Windows.Forms.Label()
@@ -123,13 +121,16 @@ Partial Class Form1
         AddHandler Me.btnDiagnostics.Click, AddressOf Me.btnDiagnostics_Click
 
         ' cmbDatabase
+        Me.cmbDatabase.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList
         Me.cmbDatabase.FormattingEnabled = True
-        Me.cmbDatabase.Items.AddRange(New Object() {"pvnc"})
+        Me.cmbDatabase.Items.AddRange(PostgreSQLBackupManager.Databases)
+        Me.cmbDatabase.Items.Add(PostgreSQLBackupManager.AllDatabases)
         Me.cmbDatabase.Location = New System.Drawing.Point(100, 12)
         Me.cmbDatabase.Name = "cmbDatabase"
         Me.cmbDatabase.Size = New System.Drawing.Size(350, 21)
         Me.cmbDatabase.TabIndex = 8
-        Me.cmbDatabase.Text = "pvnc"
+        Me.cmbDatabase.SelectedIndex = 0
+        AddHandler Me.cmbDatabase.SelectedIndexChanged, AddressOf Me.cmbDatabase_SelectedIndexChanged
 
         ' cmbSchedule
         Me.cmbSchedule.FormattingEnabled = True
@@ -188,22 +189,6 @@ Partial Class Form1
         Me.chkStartWithWindows.Text = "Start with Windows"
         Me.chkStartWithWindows.UseVisualStyleBackColor = True
 
-        ' Label7 - Password Label
-        Me.Label7.AutoSize = True
-        Me.Label7.Location = New System.Drawing.Point(310, 152)
-        Me.Label7.Name = "Label7"
-        Me.Label7.Size = New System.Drawing.Size(56, 13)
-        Me.Label7.TabIndex = 19
-        Me.Label7.Text = "Password:"
-
-        ' txtPassword - PostgreSQL password for the postgres user
-        Me.txtPassword.Location = New System.Drawing.Point(370, 149)
-        Me.txtPassword.Name = "txtPassword"
-        Me.txtPassword.Size = New System.Drawing.Size(130, 20)
-        Me.txtPassword.TabIndex = 20
-        Me.txtPassword.UseSystemPasswordChar = True
-        AddHandler Me.txtPassword.TextChanged, AddressOf Me.txtPassword_TextChanged
-
         ' lstBackups
         Me.lstBackups.FormattingEnabled = True
         Me.lstBackups.Location = New System.Drawing.Point(12, 196)
@@ -252,8 +237,6 @@ Partial Class Form1
         Me.Controls.Add(Me.lblStatus)
         Me.Controls.Add(Me.lstBackups)
         Me.Controls.Add(Me.chkStartWithWindows)
-        Me.Controls.Add(Me.txtPassword)
-        Me.Controls.Add(Me.Label7)
         Me.Controls.Add(Me.chkEnableSchedule)
         Me.Controls.Add(Me.cmbDay)
         Me.Controls.Add(Me.Label6)
@@ -290,8 +273,6 @@ Partial Class Form1
     Private WithEvents cmbDay As System.Windows.Forms.ComboBox
     Private WithEvents chkEnableSchedule As System.Windows.Forms.CheckBox
     Private WithEvents chkStartWithWindows As System.Windows.Forms.CheckBox
-    Private Label7 As System.Windows.Forms.Label
-    Private txtPassword As System.Windows.Forms.TextBox
     Private lstBackups As System.Windows.Forms.ListBox
     Private lblStatus As System.Windows.Forms.Label
     Private lblScheduleStatus As System.Windows.Forms.Label
