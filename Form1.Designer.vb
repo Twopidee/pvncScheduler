@@ -43,7 +43,7 @@ Partial Class Form1
         Me.lblScheduleStatus = New System.Windows.Forms.Label()
         Me.btnDiagnostics = New System.Windows.Forms.Button()
         Me.notifyIcon = New System.Windows.Forms.NotifyIcon(components)
-        Me.contextMenuStrip = New System.Windows.Forms.ContextMenuStrip(components)
+        Me.trayContextMenu = New System.Windows.Forms.ContextMenuStrip(components)
         Me.SuspendLayout()
 
         ' Label1 - Database Label
@@ -212,18 +212,18 @@ Partial Class Form1
         Me.lblScheduleStatus.Text = "Scheduled Backup: Not Enabled"
 
         ' notifyIcon
-        Me.notifyIcon.Text = "pvnc Backup Manager"
+        Me.notifyIcon.Text = "pvncScheduler"
         Me.notifyIcon.Visible = False
         AddHandler Me.notifyIcon.MouseClick, AddressOf Me.NotifyIcon_MouseClick
 
-        ' contextMenuStrip
-        Me.contextMenuStrip.Items.AddRange(New System.Windows.Forms.ToolStripItem() {
+        ' trayContextMenu
+        Me.trayContextMenu.Items.AddRange(New System.Windows.Forms.ToolStripItem() {
             New System.Windows.Forms.ToolStripMenuItem("Show", Nothing, AddressOf Me.ShowWindow),
             New System.Windows.Forms.ToolStripMenuItem("Backup Now", Nothing, AddressOf Me.BackupNowFromTray),
             New System.Windows.Forms.ToolStripSeparator(),
             New System.Windows.Forms.ToolStripMenuItem("Exit", Nothing, AddressOf Me.ExitApplication)
         })
-        Me.notifyIcon.ContextMenuStrip = Me.contextMenuStrip
+        Me.notifyIcon.ContextMenuStrip = Me.trayContextMenu
 
         ' Form1
         Me.AutoScaleDimensions = New System.Drawing.SizeF(6.0!, 13.0!)
@@ -249,7 +249,7 @@ Partial Class Form1
         Me.Controls.Add(Me.Label2)
         Me.Controls.Add(Me.Label1)
         Me.Name = "Form1"
-        Me.Text = "pvnc Backup Manager"
+        Me.Text = "pvncScheduler"
         AddHandler Me.Resize, AddressOf Form1_Resize
         Me.ResumeLayout(False)
         Me.PerformLayout()
@@ -275,6 +275,6 @@ Partial Class Form1
     Private lblScheduleStatus As System.Windows.Forms.Label
     Private WithEvents btnDiagnostics As System.Windows.Forms.Button
     Private notifyIcon As System.Windows.Forms.NotifyIcon
-    Private contextMenuStrip As System.Windows.Forms.ContextMenuStrip
+    Private trayContextMenu As System.Windows.Forms.ContextMenuStrip
 
 End Class

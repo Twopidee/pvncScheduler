@@ -2,18 +2,27 @@ Imports System.Timers
 Imports System.IO
 
 Public Class BackupScheduleManager
+    ' How long to wait before retrying a scheduled backup that failed
+    Private Shared ReadOnly RetryInterval As TimeSpan = TimeSpan.FromMinutes(15)
+
     Private scheduleTimer As Timer
     Private isRunning As Boolean = False
     Private currentDatabase As String
     Private currentBackupFolder As String
     Private backupManager As PostgreSQLBackupManager
-    Private lastBackupDate As DateTime = DateTime.MinValue
     Private _backupTime As String = "02:00"
     Private currentSchedule As String = "Daily"
     ' Weekday name for Weekly ("Sunday"...), day number or "Last day" for Monthly
     Private currentBackupDay As String = ""
+    ' When the next backup (or retry) is due. Any tick at or after this time runs it, so a tick that
+    ' lands late or a PC waking from sleep still gets its backup instead of missing a one-minute window.
+    Private nextRun As DateTime = DateTime.MaxValue
+    Private ReadOnly scheduleLock As New Object()
+    ' 1 while a tick is running a backup, so ticks that fire during a long backup don't start another
+    Private tickInProgress As Integer = 0
 
     Public Event BackupCompleted()
+    Public Event BackupFailed(retryAt As DateTime)
 
     Public Property BackupTime As String
         Get
@@ -37,6 +46,10 @@ Public Class BackupScheduleManager
             currentBackupFolder = backupFolder
             backupManager = New PostgreSQLBackupManager()
 
+            SyncLock scheduleLock
+                nextRun = NextOccurrence(DateTime.Now)
+            End SyncLock
+
             scheduleTimer = New Timer()
             scheduleTimer.AutoReset = True
             AddHandler scheduleTimer.Elapsed, AddressOf TimerTick
@@ -46,7 +59,7 @@ Public Class BackupScheduleManager
 
             scheduleTimer.Start()
             isRunning = True
-            Debug.WriteLine("Scheduler started for " & database)
+            Debug.WriteLine("Scheduler started for " & database & ", next run " & nextRun.ToString("yyyy-MM-dd HH:mm"))
         Catch ex As Exception
             Debug.WriteLine("Error starting scheduler: " & ex.Message)
         End Try
@@ -67,20 +80,58 @@ Public Class BackupScheduleManager
     End Sub
 
     Private Sub TimerTick(sender As Object, e As ElapsedEventArgs)
-        Try
-            Dim currentTime = DateTime.Now
-            Dim backupTimeSpan = TimeSpan.Parse(Me.BackupTime)
-            Dim targetTime = currentTime.Date.Add(backupTimeSpan)
+        If System.Threading.Interlocked.CompareExchange(tickInProgress, 1, 0) <> 0 Then
+            Return
+        End If
 
-            ' Check if we should run backup (scheduled day, within 1 minute window and not already run today)
-            If IsScheduledDay(currentTime) AndAlso currentTime >= targetTime AndAlso currentTime < targetTime.AddMinutes(1) AndAlso lastBackupDate.Date < DateTime.Now.Date Then
-                PerformBackup()
-                lastBackupDate = DateTime.Now
+        Try
+            Dim due As Boolean
+            SyncLock scheduleLock
+                due = DateTime.Now >= nextRun
+            End SyncLock
+
+            ' If a manual backup is running, wait for it and check again on the next tick
+            If Not due OrElse PostgreSQLBackupManager.IsBackupRunning Then
+                Return
+            End If
+
+            If PerformBackup() Then
+                SyncLock scheduleLock
+                    nextRun = NextOccurrence(DateTime.Now)
+                End SyncLock
+                RaiseEvent BackupCompleted()
+            Else
+                Dim retryAt As DateTime
+                SyncLock scheduleLock
+                    ' Retry soon, but never later than the next regular backup
+                    retryAt = DateTime.Now.Add(RetryInterval)
+                    Dim regular = NextOccurrence(DateTime.Now)
+                    If regular < retryAt Then
+                        retryAt = regular
+                    End If
+                    nextRun = retryAt
+                End SyncLock
+                Debug.WriteLine("Scheduled backup will retry at " & retryAt.ToString("yyyy-MM-dd HH:mm"))
+                RaiseEvent BackupFailed(retryAt)
             End If
         Catch ex As Exception
             Debug.WriteLine("Timer error: " & ex.Message)
+        Finally
+            System.Threading.Interlocked.Exchange(tickInProgress, 0)
         End Try
     End Sub
+
+    Private Function NextOccurrence(after As DateTime) As DateTime
+        ' First scheduled day/time strictly after the given moment. 62 days always spans a full month.
+        Dim backupTimeSpan = TimeSpan.Parse(Me.BackupTime)
+        For i = 0 To 62
+            Dim candidate = after.Date.AddDays(i).Add(backupTimeSpan)
+            If candidate > after AndAlso IsScheduledDay(candidate) Then
+                Return candidate
+            End If
+        Next
+        Return DateTime.MaxValue
+    End Function
 
     Private Function IsScheduledDay(day As DateTime) As Boolean
         Select Case currentSchedule
@@ -99,19 +150,19 @@ Public Class BackupScheduleManager
         End Select
     End Function
 
-    Private Sub PerformBackup()
+    Private Function PerformBackup() As Boolean
         Try
             Debug.WriteLine("Executing scheduled backup for " & currentDatabase)
             Dim backupFile = backupManager.CreateBackup(currentDatabase, currentBackupFolder)
 
             If Not String.IsNullOrEmpty(backupFile) Then
                 Debug.WriteLine("Scheduled backup completed: " & backupFile)
-                RaiseEvent BackupCompleted()
-            Else
-                Debug.WriteLine("Scheduled backup failed")
+                Return True
             End If
+            Debug.WriteLine("Scheduled backup failed")
         Catch ex As Exception
             Debug.WriteLine("Backup execution error: " & ex.Message)
         End Try
-    End Sub
+        Return False
+    End Function
 End Class

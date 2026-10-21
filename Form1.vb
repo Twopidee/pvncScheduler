@@ -21,7 +21,11 @@ Public Class Form1
         backupManager = New PostgreSQLBackupManager()
         scheduleManager = New BackupScheduleManager()
         AddHandler scheduleManager.BackupCompleted, AddressOf OnScheduledBackupCompleted
+        AddHandler scheduleManager.BackupFailed, AddressOf OnScheduledBackupFailed
         settingsFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pvncScheduler_settings.ini")
+
+        ' Use the exe's embedded icon (LDSicon.ico) for the window and tray
+        Me.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
 
         ' Tray icon is always shown so the app can be reopened after the window is closed
         notifyIcon.Icon = Me.Icon
@@ -115,8 +119,13 @@ Public Class Form1
                 For Each line In lines
                     If line.StartsWith("BackupFolder=") Then
                         Dim value = line.Substring("BackupFolder=".Length)
-                        If Directory.Exists(value) Then
+                        ' Keep the folder even if it's missing right now (network share or USB drive not
+                        ' connected yet at sign-in); scheduled backups retry until it's available
+                        If Not String.IsNullOrEmpty(value) Then
                             txtBackupFolder.Text = value
+                            If Not Directory.Exists(value) Then
+                                UpdateStatusLabel("Backup folder not found: " & value, "warning")
+                            End If
                         End If
                     ElseIf line.StartsWith("Schedule=") Then
                         Dim value = line.Substring("Schedule=".Length)
@@ -171,6 +180,12 @@ Public Class Form1
     End Sub
 
     Private Async Sub btnBackupNow_Click(sender As Object, e As EventArgs)
+        ' The tray menu calls this directly, so check here rather than relying on the button being disabled
+        If Not btnBackupNow.Enabled OrElse PostgreSQLBackupManager.IsBackupRunning Then
+            UpdateStatusLabel("A backup is already running.", "warning")
+            Return
+        End If
+
         If String.IsNullOrEmpty(txtBackupFolder.Text) Then
             MessageBox.Show("Please select a backup folder first.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
@@ -315,6 +330,12 @@ Public Class Form1
                   End Sub)
     End Sub
 
+    Private Sub OnScheduledBackupFailed(retryAt As DateTime)
+        Me.Invoke(Sub()
+                      UpdateStatusLabel("Scheduled backup failed. Retrying " & retryAt.ToString("ddd HH:mm") & ".", "error")
+                  End Sub)
+    End Sub
+
     Private Sub LoadBackupsList()
         lstBackups.Items.Clear()
 
@@ -323,8 +344,11 @@ Public Class Form1
         End If
 
         Try
-            Dim backupFiles = Directory.GetFiles(txtBackupFolder.Text, "*.backup").OrderByDescending(Function(f) New FileInfo(f).CreationTime)
-            For Each file In backupFiles.Take(10)
+            ' Remove anything beyond the newest backups so the folder matches what is listed
+            backupManager.CleanupOldBackups(txtBackupFolder.Text)
+
+            Dim backupFiles = PostgreSQLBackupManager.GetBackupFiles(txtBackupFolder.Text)
+            For Each file In backupFiles.Take(PostgreSQLBackupManager.MaxBackupsToKeep)
                 Dim fileInfo = New FileInfo(file)
                 Dim displayText = String.Format("{0} ({1} MB) - {2:yyyy-MM-dd HH:mm:ss}",
                     fileInfo.Name,

@@ -51,7 +51,7 @@ Public Class DiagnosticsForm
         pnlButtons.Controls.Add(btnClose)
 
         ' Run initial diagnostics
-        txtOutput.Text = "=== pvnc Backup Manager Diagnostics ===" & vbCrLf & vbCrLf
+        txtOutput.Text = "=== pvncScheduler Diagnostics ===" & vbCrLf & vbCrLf
         txtOutput.AppendText("Checking pg_dump installation..." & vbCrLf)
         txtOutput.AppendText(DiagnosticsHelper.CheckPgDumpInstallation() & vbCrLf & vbCrLf)
     End Sub

@@ -4,6 +4,8 @@ Imports System.IO
 Public Class PostgreSQLBackupManager
     Private pgDumpExecutable As String
     Public Const MaxBackupsToKeep As Integer = 10
+    ' Shared across all instances: 1 while a pg_dump is running
+    Private Shared backupInProgress As Integer = 0
 
     Public Sub New()
         pgDumpExecutable = FindPgDump()
@@ -45,7 +47,27 @@ Public Class PostgreSQLBackupManager
         Return "pg_dump"
     End Function
 
+    Public Shared ReadOnly Property IsBackupRunning As Boolean
+        Get
+            Return System.Threading.Volatile.Read(backupInProgress) <> 0
+        End Get
+    End Property
+
     Public Function CreateBackup(database As String, backupFolder As String) As String
+        ' Only one pg_dump at a time, whether started by the button, the tray menu or the scheduler
+        If System.Threading.Interlocked.CompareExchange(backupInProgress, 1, 0) <> 0 Then
+            Debug.WriteLine("Backup skipped: another backup is already running")
+            Return Nothing
+        End If
+
+        Try
+            Return RunBackup(database, backupFolder)
+        Finally
+            System.Threading.Interlocked.Exchange(backupInProgress, 0)
+        End Try
+    End Function
+
+    Private Function RunBackup(database As String, backupFolder As String) As String
         Try
             ' Create backup folder if it doesn't exist
             If Not Directory.Exists(backupFolder) Then
@@ -166,18 +188,23 @@ Public Class PostgreSQLBackupManager
         End Try
     End Function
 
+    Public Shared Function GetBackupFiles(backupFolder As String) As List(Of String)
+        ' Only backups this program created (pvnc_yyyyMMdd_HHmmss.backup), newest first. The timestamp in
+        ' the name sorts correctly and, unlike file dates, isn't changed by OneDrive or copying.
+        ' Both the on-screen list and the cleanup use this, so whatever is listed is exactly what is kept.
+        If Not Directory.Exists(backupFolder) Then
+            Return New List(Of String)
+        End If
+
+        Return Directory.GetFiles(backupFolder, "pvnc_*.backup").
+            Where(Function(f) System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), "^pvnc_\d{8}_\d{6}\.backup$")).
+            OrderByDescending(Function(f) Path.GetFileName(f), StringComparer.Ordinal).
+            ToList()
+    End Function
+
     Public Sub CleanupOldBackups(backupFolder As String)
         Try
-            If Not Directory.Exists(backupFolder) Then
-                Return
-            End If
-
-            ' Only touch backups this program created (pvnc_yyyyMMdd_HHmmss.backup). The timestamp in
-            ' the name sorts newest-first and, unlike file dates, isn't changed by OneDrive or copying.
-            Dim backupFiles = Directory.GetFiles(backupFolder, "pvnc_*.backup").
-                Where(Function(f) System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(f), "^pvnc_\d{8}_\d{6}\.backup$")).
-                OrderByDescending(Function(f) Path.GetFileName(f), StringComparer.Ordinal).
-                ToList()
+            Dim backupFiles = GetBackupFiles(backupFolder)
 
             ' Keep only the most recent backups, deleting the oldest
             If backupFiles.Count > MaxBackupsToKeep Then

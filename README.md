@@ -1,4 +1,4 @@
-# pvnc Backup Manager
+# pvncScheduler
 
 A Windows desktop utility (VB.NET, Windows Forms, .NET 10) that backs up the **`pvnc` PostgreSQL database** on demand or on a schedule. It runs quietly in the system tray, can start automatically when you sign in to Windows, and keeps a rolling set of the 10 most recent backups.
 
@@ -13,6 +13,8 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
 - [Features](#features)
 - [Requirements](#requirements)
 - [Building](#building)
+  - [Single-file .exe (recommended for everyday use)](#single-file-exe-recommended-for-everyday-use)
+  - [Icon](#icon)
 - [Using the program](#using-the-program)
   - [Main window](#main-window)
   - [Manual backups](#manual-backups)
@@ -54,7 +56,7 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
 ## Requirements
 
 - **Windows 10 or 11**
-- **.NET 10 Desktop Runtime** (or the .NET 10 SDK to build)
+- **.NET 10 Desktop Runtime** for the Debug/Release builds (or the .NET 10 SDK to build). Not needed for the [single-file `.exe`](#single-file-exe-recommended-for-everyday-use), which includes .NET.
 - **PostgreSQL client tools** — specifically `pg_dump.exe` (and `psql.exe` for the connection test). The program looks for them in:
   1. `C:\BouMatic\postgresql\bin\`
   2. `C:\Program Files\PostgreSQL\<15, 14, 13, 12, 11, 10, 9.6, 9.2>\bin\`
@@ -71,12 +73,27 @@ Backups are written in PostgreSQL's **custom archive format** with a `.backup` e
 **Command line:**
 
 ```powershell
-dotnet build pvncScheduler.vbproj
+dotnet build pvncScheduler.vbproj               # Debug
+dotnet build pvncScheduler.vbproj -c Release    # Release
 ```
 
-Output: `bin\Debug\net10.0-windows\pvncScheduler.exe` (or `bin\Release\...`).
+Output: `bin\Debug\net10.0-windows\pvncScheduler.exe` (or `bin\Release\net10.0-windows\...`). These builds need the whole output folder and the .NET 10 Desktop Runtime installed.
 
-> **Close the program first.** Because closing the window only hides it to the tray, a running copy locks the `.exe` and the build fails with *"The process cannot access the file ... because it is being used by another process."* Right-click the tray icon → **Exit**, then build.
+### Single-file `.exe` (recommended for everyday use)
+
+A self-contained, single-file build bundles the program and .NET into one `pvncScheduler.exe` (about 111 MB) that runs on any 64-bit Windows 10/11 PC without installing .NET:
+
+```powershell
+dotnet publish pvncScheduler.vbproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish\win-x64-single-file
+```
+
+Output: `publish\win-x64-single-file\pvncScheduler.exe`. Copy just the `.exe` — the `.pdb` beside it is debugging information and isn't needed. PostgreSQL client tools are still required (see [Requirements](#requirements)).
+
+### Icon
+
+The icon is `LDSicon.ico` in the project folder. `<ApplicationIcon>` in `pvncScheduler.vbproj` embeds it in the `.exe`, and `Form1.vb` reads it back from the `.exe` at startup (`Icon.ExtractAssociatedIcon`) for the window and tray icon. To change the icon, replace `LDSicon.ico` and rebuild.
+
+> **Close the program first.** Because closing the window only hides it to the tray, a running copy locks the `.exe` and the build or publish fails with *"The process cannot access the file ... because it is being used by another process"* or *"Access to the path ... is denied."* Right-click the tray icon → **Exit**, then build.
 
 ---
 
@@ -118,7 +135,9 @@ Success is reported only in the status bar — there's no pop-up. A failure show
 
 Changes to Schedule, Day or Time take effect immediately while Enabled is checked, and are saved.
 
-> **The program must be running at the scheduled time** (window open or hidden in the tray). If the PC is off, asleep, or the program has been exited, that backup is **skipped, not caught up later** — for a Weekly or Monthly schedule, the next run is a week or a month away. Turn on **Start with Windows** to minimize missed backups.
+> **The program must be running at the scheduled time** (window open or hidden in the tray). If the PC is **asleep** at the scheduled time, the backup runs within a minute of waking. If the PC is **off** or the program has been **exited**, that backup is skipped — for a Weekly or Monthly schedule, the next run is a week or a month away. Turn on **Start with Windows** to minimize missed backups.
+>
+> If a scheduled backup **fails** (server not running, backup folder not available yet, etc.), the status bar turns red and the backup is **retried every 15 minutes** until it succeeds or the next regular backup is due.
 
 ### Running in the background (system tray)
 
@@ -143,7 +162,7 @@ Check **Start with Windows** to have the program launch at sign-in, straight to 
 - Stored per user in the registry at `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value **`pvncScheduler`** = `"<path to pvncScheduler.exe>" --minimized`. No administrator rights required.
 - Visible in **Task Manager → Startup apps** as `pvncScheduler`.
 - Unchecking removes the registry value.
-- The checkbox reflects the actual registry state each time the program opens. If the `.exe` has moved (e.g. you switched from a Debug to a Release build), opening the new copy once with the box checked updates the path.
+- The checkbox reflects the actual registry state each time the program opens. If the `.exe` has moved (e.g. you switched from a Debug build to the single-file `.exe`), opening the new copy once with the box checked updates the path.
 
 You can also launch it hidden manually with:
 
@@ -230,13 +249,12 @@ Key details (`PostgreSQLBackupManager.vb`):
 
 ### Scheduler
 
-`BackupScheduleManager.vb` uses a `System.Timers.Timer` that ticks **every 60 seconds**. On each tick it runs a backup when **all** of these are true:
+`BackupScheduleManager.vb` works out the **next run time** when the schedule starts — the next scheduled day (always for Daily; matching weekday for Weekly; matching day-of-month or last day of the month for Monthly) at the chosen hour, strictly after now. A `System.Timers.Timer` ticks **every 60 seconds**, and the first tick at or after that time runs the backup. A late timer tick or a PC waking from sleep therefore still gets its backup.
 
-1. Today is a scheduled day — always for Daily; matching weekday for Weekly; matching day-of-month (or last day of the month) for Monthly.
-2. The current time is within the first minute after the chosen hour (e.g. 02:00:00–02:00:59).
-3. A scheduled backup hasn't already run today.
-
-When a scheduled backup succeeds, the main window refreshes its list and status (*Scheduled backup completed successfully.*).
+- **Success** — the next run time moves to the next scheduled day; the main window refreshes its list and status (*Scheduled backup completed successfully.*).
+- **Failure** — the backup is retried in 15 minutes (or at the next regular run, if that comes sooner), and the status bar shows *Scheduled backup failed. Retrying &lt;day&gt; &lt;time&gt;.* in red.
+- **Only one backup runs at a time.** If a manual backup is running when a scheduled one is due, the scheduled one waits for it. Clicking **Create Backup Now** or tray → **Backup Now** while a backup is running just shows *A backup is already running.*
+- Changing the schedule, day or time recalculates the next run from the current time.
 
 ### Settings storage
 
@@ -256,7 +274,7 @@ ScheduleEnabled=True
 
 | Key | Values |
 |---|---|
-| `BackupFolder` | Absolute folder path (ignored on load if the folder no longer exists). |
+| `BackupFolder` | Absolute folder path. Kept on load even if the folder is missing (e.g. a network or USB drive not connected yet) — the status bar shows a warning and scheduled backups retry until it's available. |
 | `Schedule` | `Disabled`, `Daily`, `Weekly`, `Monthly` |
 | `BackupTime` | `00:00` – `23:00` |
 | `BackupDay` | Weekly: `Sunday`–`Saturday`. Monthly: `1`–`28` or `Last day`. Empty for Daily. |
@@ -278,7 +296,9 @@ The **Start with Windows** setting lives in the registry (see [Start with Window
 | `DiagnosticsHelper.vb` | `pg_dump` location check and `psql` connection test. |
 | `ApplicationEvents.vb` | Single-instance handling — a second launch restores the existing window. |
 | `My Project\Application.myapp` / `Application.Designer.vb` | VB application framework settings (startup form, single instance). |
-| `pvncScheduler.vbproj` / `pvncScheduler.slnx` | Project and solution files (`net10.0-windows`, Windows Forms). |
+| `pvncScheduler.vbproj` / `pvncScheduler.slnx` | Project and solution files (`net10.0-windows`, Windows Forms, application icon). |
+| `LDSicon.ico` | Program icon for the `.exe`, window and tray. |
+| `publish\win-x64-single-file\` | Output of the single-file publish (not source). |
 
 ---
 
@@ -305,9 +325,10 @@ These values are currently set in code:
 |---|---|
 | *"Backup failed. Ensure pg_dump is installed and accessible."* | Open **Diagnostics** → **Check pg_dump**. Make sure PostgreSQL client tools are installed in one of the searched folders or on `PATH`. |
 | Backup fails but `pg_dump` is found | **Diagnostics → Test Connection**. Confirm the PostgreSQL service is running (`services.msc`) and the `pvnc` database exists. |
-| Build fails: *file is being used by another process* | The program is still running in the tray. Right-click the tray icon → **Exit**, then rebuild. |
+| Build or publish fails: *file is being used by another process* / *Access to the path ... is denied* | The program is still running in the tray. Right-click the tray icon → **Exit**, then rebuild. |
+| File Explorer still shows the old icon on the `.exe` | Windows' icon cache is stale. Refresh the folder, or sign out and back in. |
 | No tray icon | Check the hidden-icons (**^**) area next to the clock. |
-| Scheduled backup didn't run | Was the program running and the PC awake at that time? Is **Enabled** checked? Does the bottom-right label show the expected day/time? Missed runs are not caught up. |
+| Scheduled backup didn't run | Was the program running at that time? Is **Enabled** checked? Does the bottom-right label show the expected day/time? Runs missed while the PC was off or the program was exited are not caught up. A red *Scheduled backup failed* status means it's retrying every 15 minutes — use **Diagnostics** to find out why. |
 | Program doesn't start at sign-in | Check **Start with Windows** is ticked and that `pvncScheduler` is enabled in **Task Manager → Startup apps**. If you moved or rebuilt the `.exe` elsewhere, open the new copy once. |
 | Old backups not deleted | Retention only applies to files named exactly `pvnc_YYYYMMDD_HHMMSS.backup`, and only runs after a successful backup. |
 | Need more detail on a failure | Run from Visual Studio in Debug and watch the **Output** window — `pg_dump`'s exit code and error text are written there. |
@@ -325,7 +346,7 @@ Manual check from a terminal:
 
 
 - **Local server only** — host and user are fixed to `localhost` / `postgres`.
-- **Missed schedules are skipped**, not run later.
+- **Runs missed while the program wasn't running are skipped**, not run at the next startup. (Runs missed while the PC was asleep do run on wake.)
 - **Hourly times only** (00:00–23:00).
-- **Scheduled backup failures are silent** in the UI — they're written only to debug output. Check the Recent Backups list periodically.
+- **Scheduled backup failures only show in the status bar** — there's no pop-up or notification, and details (pg_dump's error text) go only to debug output.
 - **Diagnostics → Test Connection** uses a fixed `psql.exe` path under `C:\BouMatic\postgresql\bin\` and does not pass the stored password.
