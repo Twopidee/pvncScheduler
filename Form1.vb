@@ -15,6 +15,7 @@ Public Class Form1
     Private loadingStartupSetting As Boolean = False
     Friend Const LastDayOfMonth As String = "Last day"
     Private suppressScheduleChange As Boolean = False
+    Private loadingSettings As Boolean = False
 
     Public Sub New()
         InitializeComponent()
@@ -113,6 +114,7 @@ Public Class Form1
     End Sub
 
     Private Sub LoadSettings()
+        loadingSettings = True
         Try
             If File.Exists(settingsFile) Then
                 Dim lines = File.ReadAllLines(settingsFile)
@@ -146,15 +148,47 @@ Public Class Form1
                     ElseIf line.StartsWith("ScheduleEnabled=") Then
                         Dim value = line.Substring("ScheduleEnabled=".Length)
                         chkEnableSchedule.Checked = Boolean.Parse(value)
+                    ElseIf line.StartsWith("Password=") Then
+                        Dim password = PasswordProtector.Unprotect(line.Substring("Password=".Length))
+                        If password Is Nothing Then
+                            UpdateStatusLabel("Saved password could not be read. Please enter it again.", "warning")
+                        Else
+                            txtPassword.Text = password
+                            PostgreSQLBackupManager.Password = password
+                        End If
                     End If
                 Next
             End If
         Catch ex As Exception
             Debug.WriteLine("Error loading settings: " & ex.Message)
+        Finally
+            loadingSettings = False
         End Try
+
+        If String.IsNullOrEmpty(PostgreSQLBackupManager.Password) AndAlso Not File.Exists(PgPassFile()) Then
+            UpdateStatusLabel("Enter the PostgreSQL password so backups can connect.", "warning")
+        End If
+    End Sub
+
+    Private Shared Function PgPassFile() As String
+        Return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "postgresql", "pgpass.conf")
+    End Function
+
+    Private Sub txtPassword_TextChanged(sender As Object, e As EventArgs)
+        If loadingSettings Then
+            Return
+        End If
+        PostgreSQLBackupManager.Password = txtPassword.Text
+        SaveSettings()
     End Sub
 
     Private Sub SaveSettings()
+        ' Controls fire change events while settings load; saving then would overwrite
+        ' settings (like the password) that haven't been read yet
+        If loadingSettings Then
+            Return
+        End If
+
         Try
             Dim lines As New List(Of String)
             lines.Add("BackupFolder=" & txtBackupFolder.Text)
@@ -162,6 +196,8 @@ Public Class Form1
             lines.Add("BackupTime=" & cmbTime.Text)
             lines.Add("BackupDay=" & SelectedBackupDay())
             lines.Add("ScheduleEnabled=" & chkEnableSchedule.Checked.ToString())
+            ' Encrypted with DPAPI for the current Windows user, never stored as plain text
+            lines.Add("Password=" & PasswordProtector.Protect(txtPassword.Text))
             File.WriteAllLines(settingsFile, lines)
         Catch ex As Exception
             Debug.WriteLine("Error saving settings: " & ex.Message)
@@ -209,8 +245,8 @@ Public Class Form1
                 UpdateStatusLabel("Backup completed successfully: " & Path.GetFileName(backupFile))
                 LoadBackupsList()
             Else
-                UpdateStatusLabel("Backup failed. Check PostgreSQL installation and connection.", "error")
-                MessageBox.Show("Backup failed. Ensure pg_dump is installed and accessible.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                UpdateStatusLabel("Backup failed. Check the password, PostgreSQL installation and connection.", "error")
+                MessageBox.Show("Backup failed. Check that the password is correct and pg_dump is installed (Diagnostics can test both).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End If
         Catch ex As Exception
             UpdateStatusLabel("Error: " & ex.Message, "error")

@@ -51,24 +51,20 @@ If the diagnostics show pg_dump is not installed:
 
 If the diagnostics report a connection error:
 
-**The default setup expects:**
+**The program connects with:**
 - Host: localhost
 - User: postgres
-- No password (or blank password during PostgreSQL install)
+- Password: whatever is entered in the **Password** box in the main window
 
-**If you set a password during PostgreSQL installation:**
+**To fix a password error** (`password authentication failed` or `no password supplied`):
 
-Edit `PostgreSQLBackupManager.vb` line 92 and change:
-```vb
-processInfo.Arguments = String.Format("-F c -h localhost -U postgres ""{0}""", database)
+1. Type the correct `postgres` password into the **Password** box. It's saved automatically, encrypted for your Windows account.
+2. Open **Diagnostics → Test Connection** to confirm it works.
+
+Alternatively, leave the box empty and put the password in a [`pgpass.conf`](https://www.postgresql.org/docs/current/libpq-pgpass.html) file at `%APPDATA%\postgresql\pgpass.conf`:
 ```
-
-To include password (not recommended for security):
-```vb
-processInfo.Arguments = String.Format("-F c -h localhost -U postgres -W ""{0}""", database)
+localhost:*:*:postgres:<password>
 ```
-
-Or use a `.pgpass` file for authentication (secure method).
 
 ---
 

@@ -112,6 +112,7 @@ The icon is `LDSicon.ico` in the project folder. `<ApplicationIcon>` in `pvncSch
 | **Backup Time** | Hour the scheduled backup runs (24-hour clock). |
 | **Day** | Weekday (Weekly) or day of month (Monthly). Greyed out for Daily. |
 | **Start with Windows** | Launch at sign-in, minimized to the tray. |
+| **Password** | Password for the PostgreSQL `postgres` user. Saved automatically, encrypted for your Windows account. |
 | **Recent Backups** | 10 newest backups in the folder. |
 | **Status** (bottom left) | Result of the last action — green for success, red for errors. |
 | **Scheduled Backup** (bottom right) | Current schedule, e.g. *Scheduled Backup: Weekly on Fridays at 02:00*. |
@@ -241,7 +242,7 @@ Key details (`PostgreSQLBackupManager.vb`):
 - **Command:** `pg_dump -F c -h localhost -U postgres -f "<folder>\pvnc_<timestamp>.backup" "<database>"`
   - `-F c` — custom (compressed, binary) archive format, restorable with `pg_restore`.
   - `-f` — `pg_dump` writes the file **directly**. Earlier versions piped the archive through stdout; with older `pg_dump` builds that produces dozens of *"ftell mismatch with expected position"* warnings and a bloated archive, and the unread warnings filled the stderr pipe and **deadlocked** the program. Writing straight to the file avoids both problems.
-- **Password:** supplied to `pg_dump` via the `PGPASSWORD` environment variable of the child process, so it never prompts.
+- **Password:** the password entered in the main window is passed to `pg_dump` via the `PGPASSWORD` environment variable of that child process only. If none is entered, `pg_dump` uses `%APPDATA%\postgresql\pgpass.conf` if it exists. `-w` stops `pg_dump` from ever waiting at a password prompt.
 - **Output streams:** stdout and stderr are drained asynchronously so `pg_dump` can never block on a full pipe.
 - **Timeout:** 10 minutes. On timeout the process is killed and the partial file deleted.
 - **Threading:** manual backups run on a background task (`Task.Run`) so the UI never freezes; scheduled backups run on the scheduler's timer thread.
@@ -270,6 +271,7 @@ Schedule=Weekly
 BackupTime=02:00
 BackupDay=Friday
 ScheduleEnabled=True
+Password=AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA...
 ```
 
 | Key | Values |
@@ -279,6 +281,7 @@ ScheduleEnabled=True
 | `BackupTime` | `00:00` – `23:00` |
 | `BackupDay` | Weekly: `Sunday`–`Saturday`. Monthly: `1`–`28` or `Last day`. Empty for Daily. |
 | `ScheduleEnabled` | `True` / `False` |
+| `Password` | The PostgreSQL password, encrypted with Windows DPAPI. Only the same Windows user on the same PC can decrypt it; if the file is copied elsewhere, the program asks for the password again. Empty if none is saved. |
 
 The **Start with Windows** setting lives in the registry (see [Start with Windows](#start-with-windows)), not in this file.
 
@@ -310,7 +313,7 @@ These values are currently set in code:
 |---|---|---|
 | PostgreSQL host | `PostgreSQLBackupManager.vb` → `processInfo.Arguments` | `localhost` |
 | PostgreSQL user | `PostgreSQLBackupManager.vb` → `processInfo.Arguments` | `postgres` |
-| PostgreSQL password | `PostgreSQLBackupManager.vb` → `PGPASSWORD` | *(set in source)* |
+| PostgreSQL password | **Password** box in the main window (stored encrypted, see [Settings storage](#settings-storage)) | *(none)* |
 | `pg_dump` search paths | `PostgreSQLBackupManager.FindPgDump` | see [Requirements](#requirements) |
 | Backups kept | `PostgreSQLBackupManager.MaxBackupsToKeep` | `10` |
 | Backup timeout | `PostgreSQLBackupManager.CreateBackup` → `WaitForExit` | 10 minutes |
@@ -349,4 +352,4 @@ Manual check from a terminal:
 - **Runs missed while the program wasn't running are skipped**, not run at the next startup. (Runs missed while the PC was asleep do run on wake.)
 - **Hourly times only** (00:00–23:00).
 - **Scheduled backup failures only show in the status bar** — there's no pop-up or notification, and details (pg_dump's error text) go only to debug output.
-- **Diagnostics → Test Connection** uses a fixed `psql.exe` path under `C:\BouMatic\postgresql\bin\` and does not pass the stored password.
+- **Diagnostics → Test Connection** uses a fixed `psql.exe` path under `C:\BouMatic\postgresql\bin\`.

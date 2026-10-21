@@ -50,15 +50,19 @@ Public Class DiagnosticsHelper
         End Try
     End Function
 
-    Public Shared Function TestPostgreSQLConnection(host As String, username As String) As String
+    Public Shared Function TestPostgreSQLConnection(host As String, username As String, password As String) As String
         Try
             Dim pinfo = New ProcessStartInfo
             pinfo.FileName = "C:\BouMatic\postgresql\bin\psql.exe"
-            pinfo.Arguments = String.Format("-h {0} -U {1} -c ""SELECT version();""", host, username)
+            ' -w never prompts for a password, so psql can't hang waiting on a hidden prompt
+            pinfo.Arguments = String.Format("-h {0} -U {1} -w -c ""SELECT version();""", host, username)
             pinfo.UseShellExecute = False
             pinfo.RedirectStandardOutput = True
             pinfo.RedirectStandardError = True
             pinfo.CreateNoWindow = True
+            If Not String.IsNullOrEmpty(password) Then
+                pinfo.EnvironmentVariables("PGPASSWORD") = password
+            End If
 
             Using proc = Process.Start(pinfo)
                 Dim output = proc.StandardOutput.ReadToEnd()

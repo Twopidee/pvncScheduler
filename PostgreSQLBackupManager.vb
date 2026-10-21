@@ -7,6 +7,10 @@ Public Class PostgreSQLBackupManager
     ' Shared across all instances: 1 while a pg_dump is running
     Private Shared backupInProgress As Integer = 0
 
+    ' Password for the postgres user, set from the main window (stored DPAPI-encrypted in the settings file).
+    ' When empty, pg_dump falls back to %APPDATA%\postgresql\pgpass.conf.
+    Public Shared Property Password As String = ""
+
     Public Sub New()
         pgDumpExecutable = FindPgDump()
     End Sub
@@ -93,19 +97,22 @@ Public Class PostgreSQLBackupManager
             ' -F c specifies custom format (binary archive, same as pgAdmin .backup)
             ' -h localhost connects to local PostgreSQL
             ' -U postgres uses postgres user
+            ' -w never prompts for a password (fails instead of hanging if none is available)
             ' -f writes the archive directly to the file (piping custom format through
             '    stdout makes older pg_dump emit "ftell mismatch" warnings and a bloated archive)
             ' Database name to backup
 
-            processInfo.Arguments = String.Format("-F c -h localhost -U postgres -f ""{0}"" ""{1}""", backupFilePath, database)
+            processInfo.Arguments = String.Format("-F c -h localhost -U postgres -w -f ""{0}"" ""{1}""", backupFilePath, database)
             processInfo.UseShellExecute = False
             processInfo.RedirectStandardOutput = True
             processInfo.RedirectStandardError = True
             processInfo.RedirectStandardInput = True
             processInfo.CreateNoWindow = True
 
-            ' SET PASSWORD VIA ENVIRONMENT VARIABLE - PostgreSQL will use this and won't prompt
-            processInfo.EnvironmentVariables("PGPASSWORD") = "bou2004"
+            ' Pass the password to this pg_dump process only; without one, pg_dump uses pgpass.conf
+            If Not String.IsNullOrEmpty(Password) Then
+                processInfo.EnvironmentVariables("PGPASSWORD") = Password
+            End If
 
             Debug.WriteLine("Starting pg_dump with: " & processInfo.FileName & " " & processInfo.Arguments)
 

@@ -39,7 +39,7 @@ Public Class DiagnosticsForm
         btnCheckConnection.Size = New System.Drawing.Size(120, 30)
         AddHandler btnCheckConnection.Click, Sub()
                                                  txtOutput.Text = "Testing PostgreSQL connection..." & vbCrLf & vbCrLf
-                                                 txtOutput.AppendText(DiagnosticsHelper.TestPostgreSQLConnection("localhost", "postgres"))
+                                                 txtOutput.AppendText(DiagnosticsHelper.TestPostgreSQLConnection("localhost", "postgres", PostgreSQLBackupManager.Password))
                                              End Sub
         pnlButtons.Controls.Add(btnCheckConnection)
 
